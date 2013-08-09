@@ -44,14 +44,22 @@ def _open_tracedump_file(path):
         except OSError as err:
             if err.errno != errno.ENOENT:
                 raise
-    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND | nofollow, 0600)
-    stbuf = os.fstat(fd)
-    if not stat.S_ISREG(stbuf.st_mode):
-        raise IOError(errno.EINVAL, 'not a regular file: %r' % path)
-    if stbuf.st_nlink > 1:
-        raise IOError(errno.EMLINK, 'too many links (%d): %r' %
-            (stbuf.st_nlink, path))
-    return fd
+    fd = -1
+    close_fd = True
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND | nofollow,
+            0600)
+        stbuf = os.fstat(fd)
+        if not stat.S_ISREG(stbuf.st_mode):
+            raise IOError(errno.EINVAL, 'not a regular file: %r' % path)
+        if stbuf.st_nlink > 1:
+            raise IOError(errno.EMLINK, 'too many links (%d): %r' %
+                (stbuf.st_nlink, path))
+        close_fd = False
+        return fd
+    finally:
+        if close_fd and fd >= 0:
+            os.close(fd)
 
 def _print_tb(prefix, err, stream):
     """Print given traceback to stream, with optional prefix
@@ -105,9 +113,10 @@ def start(func, interrupt_trace=None, exc_trace=None):
     string, will evaluate as True).
 
     If exc_trace is True, any other exception will show a stack
-    trace.  If False, the stack trace will be omitted.  If None
-    (the default), it is set from PYTHON_DEBUG; the rest is just
-    like KeyboardInterrupt.
+    trace.  If False, the stack trace will be sent to a file
+    instead, except for SIGPIPE cases (where it is simply
+    discarded).  If None (the default), it is set from
+    PYTHON_DEBUG, similar to KeyboardInterrupt handling.
 
     In any case, signals (specifically SIGINT and SIGPIPE) that
     were caught and translated into an exception, are translated
