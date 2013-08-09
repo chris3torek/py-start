@@ -2,6 +2,40 @@
 
 import errno, os, signal, sys, traceback
 
+def sigdie(sig):
+    """Attempt to die from a signal.
+    """
+    signal.signal(sig, signal.SIG_DFL)
+    os.kill(os.getpid(), sig)
+    # We should not get here, but if we do, this exit() status
+    # is as close as we can get to what happens when we die from
+    # a signal.
+    return 128 + sig
+
+def _split_err(err):
+    """Split exc_info() (if any) into one of two "signal based"
+    errors, or generic non-signal error.  Returns a trio
+    (pipe_err, intr_err, regular_err) with at most one being
+    non-None.
+    """
+    if err is None:
+        return None, None, None
+    if isinstance(err[1], IOError) and err[1].errno == errno.EPIPE:
+        return err, None, None
+    if isinstance(err[1], KeyboardInterrupt):
+        return None, err, None
+    return None, None, err
+
+def _show_err(err, prefix=None):
+    """Dump traceback from exc_info() error, but leave out the
+    first frame, which is start() itself, and do nothing if err
+    is None.
+    """
+    if err:
+        if prefix:
+            sys.stderr.write(prefix)
+        traceback.print_exception(err[0], err[1], err[2].tb_next)
+
 def start(func, interrupt_trace=None, exc_trace=None):
     """
     Invoke a program, catch various exits, and catch broken-pipe.
@@ -15,73 +49,49 @@ def start(func, interrupt_trace=None, exc_trace=None):
     If exc_trace is True, any other exception will show a stack
     trace.  If False, the stack trace will be omitted.  If None
     (the default), it is set from PYTHON_DEBUG, the same as ^C.
+
+    In any case, signals (specifically SIGINT and SIGPIPE) that
+    were caught and translated into an exception, are translated
+    back to a signal-style exit, so as to make this a well behaved
+    Unix utility.
     """
-
-    def die(sig):
-        """attempt to die of a signal, a la "normal" Unix utility"""
-        signal.signal(sig, signal.SIG_DFL)
-        os.kill(os.getpid(), sig)
-        # We should not get here, but if we do, this exit() status
-        # is as close as we can get to what happens when we die from
-        # a signal.
-        return 128 + sig
-
-    is_intr = lambda err: isinstance(err[1], KeyboardInterrupt)
-    is_err_and_intr = lambda err: err is not None and is_intr(err)
 
     if interrupt_trace is None:
         interrupt_trace = os.environ.get('PYTHON_DEBUG', False)
     if exc_trace is None:
         exc_trace = os.environ.get('PYTHON_DEBUG', False)
 
-    ret, err1, err2, pipe1, pipe2 = 0, None, None, None, None
+    ret, err1, err2 = None, None, None
+
     try:
         ret = func()
-    except KeyboardInterrupt:
-        ret = 1
-        err1 = sys.exc_info()
     except SystemExit as err:
         ret = err.code
-    except IOError as err:
-        # check for "broken pipe" error
-        if err.errno == errno.EPIPE:
-            pipe1 = sys.exc_info()
-        else:
-            err1 = sys.exc_info()
     except:
         err1 = sys.exc_info()
     finally:
-        # If we have a broken-pipe situation, this may also raise IOError
+        # This may also cause broken pipe or get interrupted.
+        # Should we catch SystemExit here?
         try:
             sys.stdout.flush()
-        except IOError as err:
-            if err.errno == errno.EPIPE:
-                pipe2 = sys.exc_info()
-            else:
-                err2 = sys.exc_info()
-    if interrupt_trace or exc_trace:
-        for prefix, err in (
-            (None, err1),
-            ('Broken pipe -- traceback gives point of detection:\n', pipe1),
-            ('I/O error detected during final stdout flush:\n', err2),
-            ('Broken pipe detected during final stdout flush\n', pipe2),
-        ):
-            if err is None:
-                continue
-            flag = interrupt_trace if is_intr(err) else exc_trace
-            if flag:
-                if prefix:
-                    sys.stderr.write(prefix)
-                # The tracebacks include us, which is pointless, so we
-                # want to toss one frame.  Pipe2 has no additional info
-                # so toss that entirely.
-                if err and err is not pipe2:
-                    traceback.print_exception(err[0], err[1], err[2].tb_next)
+        except:
+            err2 = sys.exc_info()
 
-    # Translate interrupt and pipe back to signal-exit, so as to
-    # behave like a typical Unix utility.
-    if is_err_and_intr(err1) or is_err_and_intr(err2):
-        ret = die(signal.SIGINT)
+    pipe1, intr1, err1 = _split_err(err1)
+    pipe2, intr2, err2 = _split_err(err2)
+
+    if interrupt_trace:
+        for err in (intr1, intr2):
+            _show_err(err)
+    if exc_trace:
+        for err in (pipe1, err1):
+            _show_err(err)
+        for err in (pipe2, err2):
+            # These have no traceback so say something first.
+            _show_err(err, 'In final sys.stdout.flush():\n')
+
+    if intr1 or intr2:
+        ret = sigdie(signal.SIGINT)
     if pipe1 or pipe2:
-        ret = die(signal.SIGPIPE)
+        ret = sigdie(signal.SIGPIPE)
     sys.exit(ret)
