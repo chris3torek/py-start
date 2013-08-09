@@ -6,5 +6,5 @@ def main():
     return 0
 
 if __name__ == '__main__':
-    import start
-    start.start(main)
+    from start import start
+    start(main)
