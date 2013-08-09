@@ -43,12 +43,13 @@ def start(func, interrupt_trace=None, exc_trace=None):
     If interrupt_trace is True, a KeyboardInterrupt will show a
     stack trace.  If False, KeyboardInterrupt will not.  If None
     (the default), KeyboardInterrupt will be set from environment
-    PYTHON_DEBUG (anything Pythonically true, i.e., any non-empty
+    PYTHON_SIGINT (anything Pythonically true, i.e., any non-empty
     string, will evaluate as True).
 
     If exc_trace is True, any other exception will show a stack
     trace.  If False, the stack trace will be omitted.  If None
-    (the default), it is set from PYTHON_DEBUG, the same as ^C.
+    (the default), it is set from PYTHON_DEBUG; the rest is just
+    like KeyboardInterrupt.
 
     In any case, signals (specifically SIGINT and SIGPIPE) that
     were caught and translated into an exception, are translated
@@ -57,7 +58,7 @@ def start(func, interrupt_trace=None, exc_trace=None):
     """
 
     if interrupt_trace is None:
-        interrupt_trace = os.environ.get('PYTHON_DEBUG', False)
+        interrupt_trace = os.environ.get('PYTHON_SIGINT', False)
     if exc_trace is None:
         exc_trace = os.environ.get('PYTHON_DEBUG', False)
 
@@ -70,10 +71,12 @@ def start(func, interrupt_trace=None, exc_trace=None):
     except:
         err1 = sys.exc_info()
     finally:
-        # This may also cause broken pipe or get interrupted.
-        # Should we catch SystemExit here?
+        # This may also cause broken pipe or get interrupted (or
+        # do all kinds of things if sys.stdout has been wrapped).
         try:
             sys.stdout.flush()
+        except SystemExit as err:
+            ret = err.code # should we keep any earlier SystemExit val?
         except:
             err2 = sys.exc_info()
 
