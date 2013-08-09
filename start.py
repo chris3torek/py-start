@@ -17,6 +17,15 @@ def start(func, interrupt_trace=None, exc_trace=None):
     (the default), it is set from PYTHON_DEBUG, the same as ^C.
     """
 
+    def die(sig):
+        """attempt to die of a signal, a la "normal" Unix utility"""
+        signal.signal(sig, signal.SIG_DFL)
+        os.kill(os.getpid(), sig)
+        # We should not get here, but if we do, this exit() status
+        # is as close as we can get to what happens when we die from
+        # a signal.
+        return 128 + sig
+
     is_intr = lambda err: isinstance(err[1], KeyboardInterrupt)
     is_err_and_intr = lambda err: err is not None and is_intr(err)
 
@@ -69,15 +78,10 @@ def start(func, interrupt_trace=None, exc_trace=None):
                 if err and err is not pipe2:
                     traceback.print_exception(err[0], err[1], err[2].tb_next)
 
-    # Translate interrupt and pipe back to signal-exit, if we're
-    # behaving like a typical Unix utility.
-    if not interrupt_trace and (is_err_and_intr(err1) or is_err_and_intr(err2)):
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
-            os.kill(os.getpid(), signal.SIGINT)
-            ret = 128 + signal.SIGINT
+    # Translate interrupt and pipe back to signal-exit, so as to
+    # behave like a typical Unix utility.
+    if is_err_and_intr(err1) or is_err_and_intr(err2):
+        ret = die(signal.SIGINT)
     if pipe1 or pipe2:
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-        os.kill(os.getpid(), signal.SIGPIPE)
-        # should not get here, but if we do, this is close, shell-wise
-        ret = 128 + signal.SIGPIPE
+        ret = die(signal.SIGPIPE)
     sys.exit(ret)
