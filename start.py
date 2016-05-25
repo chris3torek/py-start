@@ -48,7 +48,7 @@ def _open_tracedump_file(path):
     close_fd = True
     try:
         fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND | nofollow,
-            0600)
+            0o600)
         stbuf = os.fstat(fd)
         if not stat.S_ISREG(stbuf.st_mode):
             raise IOError(errno.EINVAL, 'not a regular file: %r' % path)

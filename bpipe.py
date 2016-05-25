@@ -1,6 +1,6 @@
 def main():
     for i in range(1000):
-        print 'line', i
+        print('line', i)
     #raise SystemExit('foo')
     #raise IOError(1, 'foo')
     return 0
